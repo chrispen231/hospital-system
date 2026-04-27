@@ -949,9 +949,9 @@ async function handleLogout() {
 
 // ── LOAD ALL ───────────────────────────────────────────────
 async function loadAllData() {
-  // Staff must load first so doctor names resolve correctly in appointments
-  await loadStaff();
-  await Promise.all([loadPatients(),loadAppointments(),loadBilling(),loadNotices()]);
+  // Staff and patients must load first so names resolve correctly in appointments
+  await Promise.all([loadStaff(), loadPatients()]);
+  await Promise.all([loadAppointments(),loadBilling(),loadNotices()]);
   renderDashboard();
 }
 
