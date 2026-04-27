@@ -1953,7 +1953,7 @@ function renderDashboard(){
   const recent=allPatients.slice(0,5);
   document.getElementById('recent-patients-body').innerHTML=recent.length===0
     ?'<tr><td colspan="4" class="td-muted" style="text-align:center;padding:20px">No patients yet</td></tr>'
-    :recent.map(p=>'<tr><td><span style="font-weight:500;cursor:pointer;color:var(--accent)" onclick="openPatientProfile(''+p.id+'')">'+p.full_name+'</span></td><td class="td-muted" style="text-transform:capitalize">'+(p.gender||'—')+'</td><td class="td-muted">'+(p.phone||'—')+'</td><td class="td-muted">'+fmtDate(p.created_at)+'</td></tr>').join('');
+    :recent.map(p=>`<tr><td><span style="font-weight:500;cursor:pointer;color:var(--accent)" onclick="openPatientProfile('${p.id}')">${p.full_name}</span></td><td class="td-muted" style="text-transform:capitalize">${p.gender||'—'}</td><td class="td-muted">${p.phone||'—'}</td><td class="td-muted">${fmtDate(p.created_at)}</td></tr>`).join('');
 
   renderCharts();
   renderDashboardNoticesBanner();
