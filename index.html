@@ -849,6 +849,11 @@ function showScreen(id) {
 }
 
 function showSection(id) {
+  // Block access if role not permitted
+  if (window.canAccess && !window.canAccess(id)) {
+    toast("You don't have permission to access that section", 'error');
+    return;
+  }
   if (id !== 'profile') previousSection = id;
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
@@ -863,9 +868,63 @@ function showSection(id) {
   if (id === 'settings')    loadSettingsPanel();
   if (id === 'statistics')  renderStatistics();
   if (id === 'notices')     renderNotices();
+  // Apply role-specific UI after section loads
+  applyRoleUI(id);
 }
 
 function goBack() { showSection(previousSection); }
+
+// ── Apply role-specific UI adjustments per section ───────────
+function applyRoleUI(section) {
+  const role = window.currentRole || 'reception';
+
+  if (section === 'patients') {
+    // Reception and admin can add patients; doctors and nurses just view
+    const addBtn = document.querySelector('#section-patients .btn-success');
+    if (addBtn) addBtn.style.display = ['admin','reception'].includes(role) ? 'inline-flex' : 'none';
+  }
+
+  if (section === 'appointments') {
+    // Only admin, doctor, reception can book appointments
+    const bookBtn = document.querySelector('#section-appointments .btn-success');
+    if (bookBtn) bookBtn.style.display = ['admin','doctor','reception'].includes(role) ? 'inline-flex' : 'none';
+  }
+
+  if (section === 'profile') {
+    // Edit button — admin and reception only
+    const editBtn = document.querySelector('.profile-actions .btn-secondary');
+    if (editBtn) editBtn.style.display = window.canEditPatient ? 'inline-flex' : 'none';
+    // Book appointment button — admin, doctor, reception only
+    const bookBtn = document.querySelector('.profile-actions .btn-success');
+    if (bookBtn) bookBtn.style.display = window.canBookAppointment ? 'inline-flex' : 'none';
+    // Discharge summary — admin and doctors only
+    const dischargeBtn = document.querySelector('.profile-actions [onclick="printDischargeSummary()"]');
+    if (dischargeBtn) dischargeBtn.style.display = ['admin','doctor'].includes(role) ? 'inline-flex' : 'none';
+    // Hide billing tab for doctors and nurses
+    const billingTab = document.querySelectorAll('.profile-tab')[3];
+    if (billingTab) billingTab.style.display = window.canViewBilling ? '' : 'none';
+    // Hide notes tab for reception
+    const notesTab = document.querySelectorAll('.profile-tab')[2];
+    if (notesTab) notesTab.style.display = window.canViewNotes ? '' : 'none';
+  }
+
+  if (section === 'statistics') {
+    // Doctors see a filtered view — only their own appointments
+    const heroEl = document.getElementById('stats-hero');
+    if (heroEl && role === 'doctor') {
+      const myAppts = allAppointments.filter(a => a.doctor_id === currentUser?.id);
+      const done    = myAppts.filter(a=>a.status==='completed').length;
+      const sched   = myAppts.filter(a=>a.status==='scheduled').length;
+      const rate    = myAppts.length > 0 ? Math.round((done/myAppts.length)*100) : 0;
+      heroEl.innerHTML = `
+        <div class="stats-hero-card"><div class="stats-hero-val" style="color:var(--accent)">${myAppts.length}</div><div class="stats-hero-lbl">My Appointments</div></div>
+        <div class="stats-hero-card"><div class="stats-hero-val" style="color:var(--success)">${done}</div><div class="stats-hero-lbl">Completed</div></div>
+        <div class="stats-hero-card"><div class="stats-hero-val" style="color:var(--accent)">${sched}</div><div class="stats-hero-lbl">Upcoming</div></div>
+        <div class="stats-hero-card"><div class="stats-hero-val" style="color:var(--warning)">${rate}%</div><div class="stats-hero-lbl">Completion Rate</div></div>
+      `;
+    }
+  }
+}
 
 // ── Helpers ────────────────────────────────────────────────
 function fmtDate(d)     { if (!d) return '—'; return new Date(d).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); }
@@ -924,17 +983,57 @@ async function loadUserProfile(user) {
   currentUser=user;
   const {data:staff}=await sb.from('staff').select('*').eq('id',user.id).single();
   currentStaff=staff;
+  const role=staff?.role||'unknown';
+  window.currentRole=role;
+
   document.getElementById('user-name').textContent   = staff?.full_name||user.email;
-  document.getElementById('user-role').textContent   = staff?.role||'unknown';
+  document.getElementById('user-role').textContent   = role;
   document.getElementById('user-avatar').textContent = initials(staff?.full_name||user.email);
-  document.getElementById('topbar-role-badge').textContent = staff?.role||'—';
-  document.getElementById('note-compose-box').style.display = ['doctor','nurse','admin'].includes(staff?.role)?'block':'none';
-  if(staff?.role!=='admin'){
-    document.getElementById('nav-staff').style.display='none';
-    document.getElementById('nav-settings').style.display='none';
-  } else {
-    document.getElementById('add-notice-btn').style.display='inline-flex';
-  }
+  const badgeEl=document.getElementById('topbar-role-badge');
+  badgeEl.textContent=role;
+  const badgeMap={admin:'badge-red',doctor:'badge-blue',nurse:'badge-yellow',reception:'badge-green'};
+  badgeEl.className='badge '+(badgeMap[role]||'badge-gray');
+
+  // Role access map — defines exactly which nav items each role can see
+  const ACCESS = {
+    admin:     ['nav-patients','nav-appointments','nav-calendar','nav-billing','nav-staff','nav-statistics','nav-notices','nav-settings'],
+    doctor:    ['nav-patients','nav-appointments','nav-calendar','nav-statistics','nav-notices'],
+    nurse:     ['nav-patients','nav-appointments','nav-calendar','nav-notices'],
+    reception: ['nav-patients','nav-appointments','nav-calendar','nav-billing','nav-notices'],
+  };
+  const allowed = ACCESS[role] || ACCESS.reception;
+
+  // Hide ALL nav items, then show only what this role allows
+  ['nav-patients','nav-appointments','nav-calendar','nav-billing','nav-staff','nav-statistics','nav-notices','nav-settings'].forEach(id=>{
+    const el=document.getElementById(id); if(el) el.style.display='none';
+  });
+  allowed.forEach(id=>{ const el=document.getElementById(id); if(el) el.style.display=''; });
+
+  // canAccess() — used throughout the app to gate sections
+  window.canAccess = (section) => {
+    if(section==='dashboard'||section==='profile') return true;
+    return allowed.includes('nav-'+section);
+  };
+
+  // Admin-only UI elements
+  const addNoticeBtn=document.getElementById('add-notice-btn');
+  if(addNoticeBtn) addNoticeBtn.style.display=role==='admin'?'inline-flex':'none';
+  const addStaffBtn=document.getElementById('add-staff-btn');
+  if(addStaffBtn) addStaffBtn.style.display=role==='admin'?'inline-flex':'none';
+
+  // Clinical-only: medical notes compose box
+  const noteBox=document.getElementById('note-compose-box');
+  if(noteBox) noteBox.style.display=['doctor','nurse','admin'].includes(role)?'block':'none';
+
+  // Profile page action buttons — role-sensitive
+  // Edit patient: admin and reception only
+  // Book appointment button: everyone except nurse (nurses view only)
+  // Discharge summary: admin and doctors only
+  window.canEditPatient     = ['admin','reception'].includes(role);
+  window.canBookAppointment = ['admin','doctor','reception'].includes(role);
+  window.canViewBilling     = ['admin','reception'].includes(role);
+  window.canViewNotes       = ['admin','doctor','nurse'].includes(role);
+
   loadHospitalSettings();
   showScreen('dashboard-screen');
   await loadAllData();
@@ -1045,6 +1144,7 @@ async function openPatientProfile(id) {
   showSection('profile');
   switchProfileTab('overview');
   renderPatientProfile(activePatient);
+  applyRoleUI('profile');
   await Promise.all([loadProfileAppointments(id),loadProfileNotes(id),loadProfileBilling(id)]);
 }
 
@@ -1250,9 +1350,12 @@ function printDischarge() {
 //  APPOINTMENTS
 // ════════════════════════════════════════════════════════
 async function loadAppointments() {
-  const {data,error}=await sb.from('appointments').select('*').order('scheduled_at',{ascending:false});
+  const role=currentStaff?.role;
+  let query=sb.from('appointments').select('*').order('scheduled_at',{ascending:false});
+  // Doctors only see their own appointments
+  if(role==='doctor') query=query.eq('doctor_id',currentUser.id);
+  const {data,error}=await query;
   if(error){console.error('Appointments error:',error);allAppointments=[];renderAppointments([]);return;}
-  // Enrich with patient and doctor names from already-loaded arrays
   allAppointments=(data||[]).map(a=>({
     ...a,
     patient:{ full_name: allPatients.find(p=>p.id===a.patient_id)?.full_name||'Unknown' },
@@ -1778,26 +1881,84 @@ function renderRevenueSummary(){
 //  DASHBOARD
 // ════════════════════════════════════════════════════════
 function renderDashboard(){
-  document.getElementById('stat-patients').textContent=allPatients.length;
-  document.getElementById('stat-staff').textContent=allStaff.filter(s=>s.is_active).length;
-  document.getElementById('stat-unpaid').textContent=allBilling.filter(b=>b.status!=='paid').length;
+  const role=currentStaff?.role||'unknown';
   const today=new Date().toDateString();
   const todayCount=allAppointments.filter(a=>new Date(a.scheduled_at).toDateString()===today).length;
-  document.getElementById('stat-today').textContent=todayCount;
+
+  if(role==='doctor'){
+    document.getElementById('stat-patients').textContent=allPatients.length;
+    document.getElementById('stat-today').textContent=todayCount;
+    document.getElementById('stat-staff').textContent=allAppointments.filter(a=>a.status==='completed').length;
+    document.getElementById('stat-unpaid').textContent=allAppointments.filter(a=>a.status==='scheduled').length;
+    const labels=document.querySelectorAll('.stat-label');
+    const subs=document.querySelectorAll('.stat-sub');
+    if(labels[0]) labels[0].textContent='Total Patients';
+    if(labels[1]) labels[1].textContent='My Appts Today';
+    if(labels[2]) labels[2].textContent='Completed';
+    if(labels[3]) labels[3].textContent='Upcoming';
+    if(subs[2]) subs[2].textContent='My appointments';
+    if(subs[3]) subs[3].textContent='My appointments';
+  } else if(role==='nurse'){
+    document.getElementById('stat-patients').textContent=allPatients.length;
+    document.getElementById('stat-today').textContent=todayCount;
+    document.getElementById('stat-staff').textContent=allAppointments.filter(a=>a.status==='scheduled').length;
+    document.getElementById('stat-unpaid').textContent=allAppointments.filter(a=>a.status==='completed').length;
+    const labels=document.querySelectorAll('.stat-label');
+    const subs=document.querySelectorAll('.stat-sub');
+    if(labels[0]) labels[0].textContent='Total Patients';
+    if(labels[1]) labels[1].textContent='Appts Today';
+    if(labels[2]) labels[2].textContent='Scheduled';
+    if(labels[3]) labels[3].textContent='Completed';
+    if(subs[2]) subs[2].textContent='All appointments';
+    if(subs[3]) subs[3].textContent='All appointments';
+  } else if(role==='reception'){
+    document.getElementById('stat-patients').textContent=allPatients.length;
+    document.getElementById('stat-today').textContent=todayCount;
+    document.getElementById('stat-staff').textContent=allAppointments.filter(a=>a.status==='scheduled').length;
+    document.getElementById('stat-unpaid').textContent=allBilling.filter(b=>b.status!=='paid').length;
+    const labels=document.querySelectorAll('.stat-label');
+    const subs=document.querySelectorAll('.stat-sub');
+    if(labels[0]) labels[0].textContent='Total Patients';
+    if(labels[1]) labels[1].textContent='Appts Today';
+    if(labels[2]) labels[2].textContent='Upcoming';
+    if(labels[3]) labels[3].textContent='Unpaid Bills';
+    if(subs[2]) subs[2].textContent='Scheduled';
+    if(subs[3]) subs[3].textContent='Pending payment';
+  } else {
+    document.getElementById('stat-patients').textContent=allPatients.length;
+    document.getElementById('stat-today').textContent=todayCount;
+    document.getElementById('stat-staff').textContent=allStaff.filter(s=>s.is_active).length;
+    document.getElementById('stat-unpaid').textContent=allBilling.filter(b=>b.status!=='paid').length;
+    const labels=document.querySelectorAll('.stat-label');
+    const subs=document.querySelectorAll('.stat-sub');
+    if(labels[0]) labels[0].textContent='Total Patients';
+    if(labels[1]) labels[1].textContent="Today's Appointments";
+    if(labels[2]) labels[2].textContent='Active Staff';
+    if(labels[3]) labels[3].textContent='Unpaid Bills';
+    if(subs[2]) subs[2].textContent='Currently active';
+    if(subs[3]) subs[3].textContent='Pending payment';
+  }
+
+  // Hide revenue chart from doctors and nurses
+  const dashBottom=document.querySelector('.dashboard-bottom');
+  if(dashBottom){
+    const revenueCard=dashBottom.querySelectorAll('.card')[1];
+    if(revenueCard) revenueCard.style.display=['admin','reception'].includes(role)?'block':'none';
+  }
+
   const badge=document.getElementById('today-badge');
-  if(todayCount>0){badge.style.display='inline-flex';document.getElementById('today-badge-text').textContent=`${todayCount} today`;}else badge.style.display='none';
+  if(todayCount>0){badge.style.display='inline-flex';document.getElementById('today-badge-text').textContent=todayCount+' today';}
+  else badge.style.display='none';
+
   const recent=allPatients.slice(0,5);
   document.getElementById('recent-patients-body').innerHTML=recent.length===0
-    ?`<tr><td colspan="4" class="td-muted" style="text-align:center;padding:20px">No patients yet</td></tr>`
-    :recent.map(p=>`<tr>
-        <td><span style="font-weight:500;cursor:pointer;color:var(--accent)" onclick="openPatientProfile('${p.id}')">${p.full_name}</span></td>
-        <td class="td-muted" style="text-transform:capitalize">${p.gender||'—'}</td>
-        <td class="td-muted">${p.phone||'—'}</td>
-        <td class="td-muted">${fmtDate(p.created_at)}</td>
-      </tr>`).join('');
+    ?'<tr><td colspan="4" class="td-muted" style="text-align:center;padding:20px">No patients yet</td></tr>'
+    :recent.map(p=>'<tr><td><span style="font-weight:500;cursor:pointer;color:var(--accent)" onclick="openPatientProfile(''+p.id+'')">'+p.full_name+'</span></td><td class="td-muted" style="text-transform:capitalize">'+(p.gender||'—')+'</td><td class="td-muted">'+(p.phone||'—')+'</td><td class="td-muted">'+fmtDate(p.created_at)+'</td></tr>').join('');
+
   renderCharts();
   renderDashboardNoticesBanner();
 }
+
 
 // ── Auth state ─────────────────────────────────────────────
 sb.auth.getSession().then(({data:{session}})=>{if(session)loadUserProfile(session.user);});
