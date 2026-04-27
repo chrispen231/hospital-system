@@ -949,7 +949,9 @@ async function handleLogout() {
 
 // ── LOAD ALL ───────────────────────────────────────────────
 async function loadAllData() {
-  await Promise.all([loadPatients(),loadAppointments(),loadBilling(),loadStaff(),loadNotices()]);
+  // Staff must load first so doctor names resolve correctly in appointments
+  await loadStaff();
+  await Promise.all([loadPatients(),loadAppointments(),loadBilling(),loadNotices()]);
   renderDashboard();
 }
 
@@ -1077,34 +1079,36 @@ function switchProfileTab(tab) {
 }
 
 async function loadProfileAppointments(pid) {
-  const {data}=await sb.from('appointments').select('*,doctor:staff(full_name)').eq('patient_id',pid).order('scheduled_at',{ascending:false});
+  const {data}=await sb.from('appointments').select('*').eq('patient_id',pid).order('scheduled_at',{ascending:false});
   const list=data||[];
   const c=document.getElementById('profile-appointments-list');
   if(!list.length){c.innerHTML=`<div class="empty-state"><div class="empty-icon">📅</div><p>No appointments on record</p></div>`;return;}
-  c.innerHTML=list.map(a=>`
-    <div class="timeline-item">
+  c.innerHTML=list.map(a=>{
+    const drName=allStaff.find(s=>s.id===a.doctor_id)?.full_name||'—';
+    return`<div class="timeline-item">
       <div class="timeline-dot ${a.status||'scheduled'}"></div>
       <div class="timeline-body">
         <div class="timeline-title">${a.reason||'General visit'}</div>
-        <div class="timeline-sub">${fmtDateTime(a.scheduled_at)} · Dr. ${a.doctor?.full_name||'—'} · <span class="badge ${a.status==='completed'?'badge-green':a.status==='cancelled'?'badge-gray':'badge-blue'}">${a.status}</span></div>
+        <div class="timeline-sub">${fmtDateTime(a.scheduled_at)} · Dr. ${drName} · <span class="badge ${a.status==='completed'?'badge-green':a.status==='cancelled'?'badge-gray':'badge-blue'}">${a.status}</span></div>
         ${a.notes?`<div style="margin-top:6px;font-size:13px;color:var(--text-2)">${a.notes}</div>`:''}
       </div>
-    </div>`).join('');
+    </div>`;}).join('');
 }
 
 async function loadProfileNotes(pid) {
-  const {data}=await sb.from('medical_notes').select('*,author:staff(full_name,role)').eq('patient_id',pid).order('created_at',{ascending:false});
+  const {data}=await sb.from('medical_notes').select('*').eq('patient_id',pid).order('created_at',{ascending:false});
   const list=data||[];
   const c=document.getElementById('profile-notes-list');
   if(!list.length){c.innerHTML=`<div class="empty-state"><div class="empty-icon">📋</div><p>No medical notes yet</p></div>`;return;}
-  c.innerHTML=list.map(n=>`
-    <div class="note-card">
+  c.innerHTML=list.map(n=>{
+    const author=allStaff.find(s=>s.id===n.written_by);
+    return`<div class="note-card">
       <div class="note-meta">
-        <span class="note-author">${n.author?.full_name||'Unknown'} <span class="badge role-${n.author?.role||'doctor'}" style="margin-left:6px;font-size:11px">${n.author?.role||''}</span></span>
+        <span class="note-author">${author?.full_name||'Unknown'} <span class="badge role-${author?.role||'doctor'}" style="margin-left:6px;font-size:11px">${author?.role||''}</span></span>
         <span class="note-date">${fmtDateTime(n.created_at)}</span>
       </div>
       <div class="note-text">${n.note}</div>
-    </div>`).join('');
+    </div>`;}).join('');
 }
 
 async function saveNote() {
@@ -1154,12 +1158,12 @@ async function printDischargeSummary() {
 
   // Fetch all data for this patient
   const [apptRes,noteRes,billRes]=await Promise.all([
-    sb.from('appointments').select('*,doctor:staff(full_name)').eq('patient_id',p.id).order('scheduled_at',{ascending:false}),
-    sb.from('medical_notes').select('*,author:staff(full_name,role)').eq('patient_id',p.id).order('created_at',{ascending:false}),
+    sb.from('appointments').select('*').eq('patient_id',p.id).order('scheduled_at',{ascending:false}),
+    sb.from('medical_notes').select('*').eq('patient_id',p.id).order('created_at',{ascending:false}),
     sb.from('billing').select('*').eq('patient_id',p.id).order('created_at',{ascending:false}),
   ]);
-  const appts=apptRes.data||[];
-  const notes=noteRes.data||[];
+  const appts=(apptRes.data||[]).map(a=>({...a,doctor:{full_name:allStaff.find(s=>s.id===a.doctor_id)?.full_name||'—'}}));
+  const notes=(noteRes.data||[]).map(n=>({...n,author:{full_name:allStaff.find(s=>s.id===n.written_by)?.full_name||'Unknown',role:allStaff.find(s=>s.id===n.written_by)?.role||'staff'}}));
   const bills=billRes.data||[];
   const totalBilled=bills.reduce((s,b)=>s+Number(b.total_amount),0);
   const totalPaid=bills.reduce((s,b)=>s+Number(b.amount_paid),0);
@@ -1246,8 +1250,15 @@ function printDischarge() {
 //  APPOINTMENTS
 // ════════════════════════════════════════════════════════
 async function loadAppointments() {
-  const {data}=await sb.from('appointments').select('*,patient:patients(full_name),doctor:staff(full_name)').order('scheduled_at',{ascending:false});
-  allAppointments=data||[]; renderAppointments(allAppointments);
+  const {data,error}=await sb.from('appointments').select('*').order('scheduled_at',{ascending:false});
+  if(error){console.error('Appointments error:',error);allAppointments=[];renderAppointments([]);return;}
+  // Enrich with patient and doctor names from already-loaded arrays
+  allAppointments=(data||[]).map(a=>({
+    ...a,
+    patient:{ full_name: allPatients.find(p=>p.id===a.patient_id)?.full_name||'Unknown' },
+    doctor:{ full_name: allStaff.find(s=>s.id===a.doctor_id)?.full_name||'Unknown' },
+  }));
+  renderAppointments(allAppointments);
 }
 
 function renderAppointments(list) {
@@ -1589,8 +1600,11 @@ function renderStatistics() {
 //  PHASE 5 — NOTICES
 // ════════════════════════════════════════════════════════
 async function loadNotices() {
-  const {data}=await sb.from('notices').select('*,author:staff(full_name,role)').order('pinned',{ascending:false}).order('created_at',{ascending:false});
-  allNotices=data||[];
+  const {data}=await sb.from('notices').select('*').order('pinned',{ascending:false}).order('created_at',{ascending:false});
+  allNotices=(data||[]).map(n=>({
+    ...n,
+    author:{ full_name:allStaff.find(s=>s.id===n.author_id)?.full_name||'Admin', role:allStaff.find(s=>s.id===n.author_id)?.role||'admin' }
+  }));
   renderNoticesBadge();
   renderDashboardNoticesBanner();
 }
