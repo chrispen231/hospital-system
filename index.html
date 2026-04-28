@@ -385,11 +385,95 @@
       .no-print { display:none !important; }
     }
     #print-portal { display:none; }
+
+    /* RESPONSIVE */
+    .sidebar-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:98; }
+    .sidebar-overlay.open { display:block; }
+    .hamburger { display:none; background:none; border:none; cursor:pointer; padding:6px; border-radius:8px; flex-direction:column; gap:5px; flex-shrink:0; }
+    .hamburger span { display:block; width:22px; height:2px; background:var(--text); border-radius:2px; transition:all 0.3s; }
+    .hamburger:hover { background:var(--bg); }
+
+    @media (max-width:768px) {
+      .hamburger { display:flex; }
+      .sidebar { position:fixed; left:-260px; top:0; height:100vh; z-index:99; transition:left 0.3s cubic-bezier(.4,0,.2,1); width:260px; box-shadow:4px 0 20px rgba(0,0,0,0.2); }
+      .sidebar.open { left:0; }
+      #dashboard-screen { flex-direction:column; }
+      .main { width:100%; min-width:0; }
+      .topbar { padding:0 16px; height:56px; gap:10px; position:sticky; top:0; z-index:50; }
+      .topbar-title { font-size:15px; }
+      .global-search-wrap { display:none; }
+      .today-badge { padding:4px 8px; font-size:11px; }
+      #topbar-role-badge { display:none; }
+      .page-content { padding:16px; }
+      .stat-grid { grid-template-columns:1fr 1fr; gap:12px; margin-bottom:16px; }
+      .stat-card { padding:14px; }
+      .stat-value { font-size:24px; }
+      .stat-sub { font-size:11px; }
+      .dashboard-bottom { grid-template-columns:1fr; gap:14px; }
+      .stats-grid-2 { grid-template-columns:1fr; }
+      .stats-hero { grid-template-columns:1fr 1fr; gap:12px; }
+      .card { overflow-x:auto; }
+      table { min-width:500px; }
+      th,td { padding:10px 12px; font-size:13px; }
+      .profile-header { flex-direction:column; gap:16px; padding:20px 16px; }
+      .profile-avatar { width:56px; height:56px; font-size:20px; }
+      .profile-name { font-size:18px; }
+      .profile-actions { flex-direction:row; flex-wrap:wrap; width:100%; justify-content:flex-start; }
+      .profile-tabs { overflow-x:auto; }
+      .profile-tab { padding:10px 14px; font-size:13px; white-space:nowrap; }
+      .info-grid { grid-template-columns:1fr 1fr; gap:14px; }
+      .modal-overlay { padding:0; align-items:flex-end; }
+      .modal { border-radius:20px 20px 0 0; max-height:92vh; width:100%; max-width:100%; }
+      .modal-body { padding:16px; }
+      .modal-header { padding:16px 16px 12px; }
+      .modal-footer { padding:12px 16px; }
+      .form-grid { grid-template-columns:1fr; }
+      .form-grid .full { grid-column:1; }
+      .settings-grid { grid-template-columns:1fr; }
+      .settings-nav { flex-direction:row; flex-wrap:wrap; gap:4px; margin-bottom:16px; }
+      .settings-nav-item { padding:8px 12px; font-size:13px; }
+      .cal-grid { min-width:580px; }
+      #cal-grid-wrap { overflow-x:auto; }
+      .cal-toolbar { flex-direction:column; gap:10px; align-items:stretch; }
+      .cal-nav { justify-content:center; }
+      .cal-week-label { min-width:unset; font-size:13px; text-align:center; }
+      .search-bar { flex-wrap:wrap; }
+      .notice-card-header { flex-direction:column; gap:8px; }
+      .invoice-meta { grid-template-columns:1fr; gap:16px; }
+      .invoice-totals { width:100%; }
+      .invoice-print-header { flex-direction:column; gap:12px; }
+      .ds-header { flex-direction:column; gap:12px; }
+      .ds-patient-banner { flex-direction:column; gap:12px; }
+      .ds-info-row { flex-direction:column; }
+      .ds-info-key { min-width:unset; font-weight:600; }
+      #toast { bottom:16px; right:16px; left:16px; max-width:unset; }
+      .allergy-banner { flex-wrap:wrap; }
+      .user-info { display:none; }
+      .login-card { padding:32px 24px; margin:16px; }
+    }
+
+    @media (max-width:480px) {
+      .stat-value { font-size:20px; }
+      .stat-label { font-size:10px; }
+      .stats-hero { grid-template-columns:1fr 1fr; }
+      .profile-actions .btn { font-size:11px; padding:5px 8px; }
+      .card-header { flex-wrap:wrap; gap:8px; }
+      .card-title { font-size:14px; }
+      .topbar-title { font-size:14px; }
+    }
+
+    @media (min-width:769px) and (max-width:1024px) {
+      .sidebar { width:200px; }
+      .page-content { padding:20px; }
+      .stat-grid { grid-template-columns:repeat(2,1fr); }
+      .global-search-wrap { max-width:200px; }
+    }
   </style>
 </head>
 <body>
 
 <div id="print-portal"></div>
+<div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
 
 <!-- ══════════ LOGIN ══════════ -->
 <div id="login-screen" class="screen active">
@@ -447,6 +531,9 @@
   <div class="main">
     <div class="topbar">
       <div class="topbar-left">
+        <button class="hamburger" id="hamburger-btn" onclick="toggleSidebar()" aria-label="Toggle menu">
+          <span></span><span></span><span></span>
+        </button>
         <button class="back-btn" id="back-btn" onclick="goBack()" style="display:none">← Back</button>
         <div class="topbar-title" id="topbar-title">Dashboard</div>
       </div>
@@ -2003,6 +2090,44 @@ function renderDashboard(){
   renderDashboardNoticesBanner();
 }
 
+
+// ════════════════════════════════════════════════════════
+//  RESPONSIVE — SIDEBAR TOGGLE
+// ════════════════════════════════════════════════════════
+function toggleSidebar() {
+  const sidebar  = document.querySelector('.sidebar');
+  const overlay  = document.getElementById('sidebar-overlay');
+  const isOpen   = sidebar.classList.contains('open');
+  if (isOpen) {
+    sidebar.classList.remove('open');
+    overlay.classList.remove('open');
+    document.body.style.overflow = '';
+  } else {
+    sidebar.classList.add('open');
+    overlay.classList.add('open');
+    document.body.style.overflow = 'hidden'; // prevent scroll behind overlay
+  }
+}
+
+function closeSidebar() {
+  document.querySelector('.sidebar').classList.remove('open');
+  document.getElementById('sidebar-overlay').classList.remove('open');
+  document.body.style.overflow = '';
+}
+
+// Close sidebar when a nav item is clicked on mobile
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('.nav-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (window.innerWidth <= 768) closeSidebar();
+    });
+  });
+});
+
+// Close sidebar on resize to desktop
+window.addEventListener('resize', () => {
+  if (window.innerWidth > 768) closeSidebar();
+});
 
 // ── Auth state ─────────────────────────────────────────────
 sb.auth.getSession().then(({data:{session}})=>{if(session)loadUserProfile(session.user);});
